@@ -1,1 +1,1 @@
-NEW implementation of *barebone* DSOPT .. strip out irrelevant functionatlities.. solely used for optimization to learn parametrers P and A matrices ONLY
+Barebone implementation of Dynamical System (DS) Optimization module
