@@ -87,7 +87,7 @@ class dsopt_class():
         nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
         S = ca.nlpsol('S', 'ipopt', nlp)
         result = S(x0=[0.1]*N**2, lbg=lbg, ubg=ubg)
-        # print(result['x'])
+        print(result['x'])
         self.P = np.array(result['x']).reshape(N, N)
 
 
@@ -105,11 +105,11 @@ class dsopt_class():
         constraints = []
 
         for k in range(K):
-            A_vars.append(cp.Variable((M, M)))
-            Q_vars.append(cp.Variable((M, M), symmetric=True))
+            A_vars.append(cp.Variable((N, N)))
+            Q_vars.append(cp.Variable((N, N), symmetric=True))
 
             epi = 0.001
-            epi = epi * -np.eye(M)
+            epi = epi * -np.eye(N)
 
             constraints += [A_vars[k].T @ P + P @ A_vars[k] == Q_vars[k]]
             constraints += [Q_vars[k] << epi]
@@ -123,7 +123,7 @@ class dsopt_class():
                 x_dot_pred += cp.multiply(np.tile(gamma[k, :], (N, 1)), x_dot_pred_k)
 
 
-        Objective = cp.norm(x_dot_pred-self.x_dot, 'fro')
+        Objective = cp.norm(x_dot_pred.T-self.x_dot, 'fro')
 
         prob = cp.Problem(cp.Minimize(Objective), constraints)
         prob.solve(solver=cp.MOSEK, verbose=True)
