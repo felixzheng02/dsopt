@@ -23,6 +23,13 @@ def _objective_P(P, x, x_dot, w = 0.0001):
     return J_total
 
 
+def _initial_guess(x):
+    cov = np.cov(x.T)
+    U, S, VT = np.linalg.svd(cov)
+    S = S * 100  #expand the eigen value
+    cov = U @ np.diag(S) @ VT
+    return cov.flatten()
+
 
 
 class dsopt_class():
@@ -56,7 +63,7 @@ class dsopt_class():
         self._optimize_P()
         self._optimize_A()
 
-
+        return self.A
 
     def _optimize_P(self):
         # Define parameters and variables 
@@ -86,7 +93,8 @@ class dsopt_class():
         # Solve nlp
         nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
         S = ca.nlpsol('S', 'ipopt', nlp)
-        result = S(x0=[0.1]*N**2, lbg=lbg, ubg=ubg)
+        # result = S(x0=[0.1]*N**2, lbg=lbg, ubg=ubg)
+        result = S(x0=_initial_guess(self.x_sh), lbg=lbg, ubg=ubg)
         print(result['x'])
         self.P = np.array(result['x']).reshape(N, N)
 
@@ -133,4 +141,6 @@ class dsopt_class():
         for k in range(K):
             A_res[k, :, :] = A_vars[k].value
             print(A_vars[k].value)
+        
+        self.A = A_res
 
