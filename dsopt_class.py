@@ -91,9 +91,11 @@ class dsopt_class():
 
 
         # Define constraints
+        k = 0
         for i in range(N):
             for j in range(i + 1, N):  
-                g[i+j-1] = (P[j, i] - P[i, j])   # Symmetry constraints
+                g[k] = (P[j, i] - P[i, j])   # Symmetry constraints
+                k += 1
 
         eigen_value = ca.eig_symbolic(P)
         for i in range(N):
@@ -110,7 +112,6 @@ class dsopt_class():
         # Solve nlp
         nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
         S = ca.nlpsol('S', 'ipopt', nlp)
-        # result = S(x0=[0.1]*N**2, lbg=lbg, ubg=ubg)
         result = S(x0=_initial_guess(self.x_sh), lbg=lbg, ubg=ubg)
         print(result['x'])
         self.P = np.array(result['x']).reshape(N, N)
@@ -143,7 +144,7 @@ class dsopt_class():
         for k in range(K):
             x_dot_pred_k = A_vars[k] @ self.x_sh.T
             if k == 0:
-                x_dot_pred = cp.multiply(np.tile(gamma[k, :], (N, 1)), x_dot_pred_k)
+                x_dot_pred  = cp.multiply(np.tile(gamma[k, :], (N, 1)), x_dot_pred_k)
             else:
                 x_dot_pred += cp.multiply(np.tile(gamma[k, :], (N, 1)), x_dot_pred_k)
 
