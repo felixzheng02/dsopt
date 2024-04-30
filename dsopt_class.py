@@ -1,6 +1,21 @@
+import json, os
 import numpy  as np
 import casadi as ca
 import cvxpy  as cp
+
+
+
+def read_json(path):
+    with open(path, 'r') as f:
+        data = json.load(f)
+    return data
+
+
+
+def write_json(data, path):
+    with open(path, "w") as json_file:
+        json.dump(data, json_file, indent=4)
+
 
 
 
@@ -62,8 +77,10 @@ class dsopt_class():
     def begin(self):
         self._optimize_P()
         self._optimize_A()
-
+        self._logOut()
+        
         return self.A
+
 
     def _optimize_P(self):
         # Define parameters and variables 
@@ -144,3 +161,23 @@ class dsopt_class():
         
         self.A = A_res
 
+
+
+
+    def _logOut(self, js_path=[]):
+        """
+        If json file exists, overwrite; if not create a new one
+
+        A: K,M,M
+        """    
+
+        if len(js_path) == 0:
+            js_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'output.json')
+        self.original_js = read_json(js_path)
+
+        self.original_js['A'] = self.A.ravel().tolist()
+        self.original_js['attractor']= self.x_att.ravel().tolist()
+        self.original_js['att_all']= self.x_att.ravel().tolist()
+        self.original_js["gripper_open"] = 0
+
+        write_json(self.original_js, js_path)
