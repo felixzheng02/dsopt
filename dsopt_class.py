@@ -18,7 +18,6 @@ def write_json(data, path):
 
 
 
-
 def _objective_P(P, x, x_dot, w = 0.0001):
     """ Eq(7) and Eq(8) in https://www.sciencedirect.com/science/article/abs/pii/S0921889014000372"""
     M, N = x.shape
@@ -36,6 +35,7 @@ def _objective_P(P, x, x_dot, w = 0.0001):
         J_total += ca.if_else(dv_dt<0, -w*psi**2, psi**2)  # Eq(7)
 
     return J_total
+
 
 
 def _initial_guess(x):
@@ -77,9 +77,10 @@ class dsopt_class():
     def begin(self):
         self._optimize_P()
         self._optimize_A()
-        self._logOut()
+        # self._logOut()
         
         return self.A
+
 
 
     def _optimize_P(self):
@@ -156,14 +157,12 @@ class dsopt_class():
         prob = cp.Problem(cp.Minimize(Objective), constraints)
         prob.solve(solver=cp.MOSEK, verbose=True)
 
-
         A_res = np.zeros((K, N, N))
         for k in range(K):
             A_res[k, :, :] = A_vars[k].value
             print(A_vars[k].value)
         
         self.A = A_res
-
 
 
 
