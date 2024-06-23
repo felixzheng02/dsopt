@@ -123,13 +123,14 @@ class dsopt_class():
         N = self.N
         K = self.K
         P = self.P
+
         gamma = self.gamma
 
         # Define variables and constraints
         A_vars = []
         Q_vars = []
         constraints = []
-
+        max_norm = 1
         for k in range(K):
             A_vars.append(cp.Variable((N, N)))
             Q_vars.append(cp.Variable((N, N), symmetric=True))
@@ -139,6 +140,7 @@ class dsopt_class():
 
             constraints += [A_vars[k].T @ P + P @ A_vars[k] == Q_vars[k]]
             constraints += [Q_vars[k] << epi]
+            constraints += [cp.norm(A_vars[k], 'fro') <= max_norm]
 
 
         for k in range(K):
