@@ -141,7 +141,7 @@ class dsopt_class():
 
             constraints += [A_vars[k].T @ P + P @ A_vars[k] == Q_vars[k]]
             constraints += [Q_vars[k] << epi]
-            constraints += [cp.norm(A_vars[k], 'fro') <= max_norm]
+            # constraints += [cp.norm(A_vars[k], 'fro') <= max_norm]
 
 
         for k in range(K):
