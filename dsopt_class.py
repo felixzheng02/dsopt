@@ -46,7 +46,21 @@ def _initial_guess(x):
     return cov.flatten()
 
 
-def get_PCA_P(att, K, x_dot, assignment_arr):
+def normalize_vector(v):
+    norm = np.linalg.norm(v)
+    if norm == 0: 
+        return v
+    return v / norm
+
+def project_points(data, vector):
+    unit_vector = normalize_vector(vector)
+    projections = data @ unit_vector
+    return projections
+
+def find_range(projections):
+    return np.max(projections) - np.min(projections)
+
+def get_PCA_P(att, K, x, x_dot, assignment_arr):
 
     """
     for k in range(K):
@@ -67,52 +81,101 @@ def get_PCA_P(att, K, x_dot, assignment_arr):
     """
     
     mean_vec = []
+    mag_vec = []
     for k in range(K):
+        x_k = x[assignment_arr==k,:]
         x_dot_k = x_dot[assignment_arr==k, :]
-        print(x_dot_k)
-        exit()
         x_dot_mean_k = np.mean(x_dot_k, axis=0)
+
+        mag = np.linalg.norm(x_k[-1,:] - x_k[0,:])
+
+        x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
         mean_vec.append(x_dot_mean_k)
+        mag_vec.append(mag)
+        
     mean_vec = np.array(mean_vec)
+    mag_vec = np.array(mag_vec).reshape(-1,1)
 
 
-    mean_vec = mean_vec - att[0]
-    cov_matrix = np.cov(mean_vec.T, bias=True)
-    eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-    principal_axes = eigenvectors
+    # Variable for the normal vector (a, b)
+    w = cp.Variable(2)
+    gamma = cp.Variable()
+    # Variable for the margin
+    # Constraints
+
+    weights = np.arange(K)
+    constraints = [(float(weights[i])*(mean_vec[i] @ w) >= float(weights[i])*gamma) for i in range(len(mean_vec))]
+    constraints.append(cp.SOC(1, w))
+
+    # Objective function
+    objective = cp.Maximize(gamma)
+
+    # Problem
+    problem = cp.Problem(objective, constraints)
+
+    # Solve
+    problem.solve(verbose=True)
+
+    # Extract the coefficients a, b, and margin gamma
+    w_value = w.value
+    print(w_value)
+    print(mean_vec)
+    print(mean_vec @ w_value)
+
+    d = np.array([-w_value[1], w_value[0]])
+    d1 = d/np.linalg.norm(d)
+    d2 = np.array(w_value)
+    d2 = d2/np.linalg.norm(d2)
+
+
+    projections_on_d1 = np.sum(np.abs(mag_vec * mean_vec @ d1))
+    projections_on_d2 = np.sum(np.abs(mag_vec * mean_vec @ d2))
+
+    eigenvalues = np.array([projections_on_d1, projections_on_d2])
+    eigenvectors = np.hstack((d1.reshape(-1,1), d2.reshape(-1,1)))
+
+
+    # mean_vec = mean_vec - att[0]
+    # cov_matrix = np.cov(mean_vec.T)
+    # eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
 
     theta = -np.pi/2
     R = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
-
+    principal_axes = R @ eigenvectors
     #PPP = (R @ e_vec)  @ np.diag(e_val) @ (R @ e_vec).T
-    PPP = (R @ eigenvectors) @ np.diag(eigenvalues)* 0.01 @ (R @ eigenvectors).T
+    PPP = principal_axes @ np.diag(eigenvalues) @ principal_axes.T
 
-    # import matplotlib.pyplot as plt
-    # # Plotting
-    # plt.figure(figsize=(8, 8))
+    
 
-    # # Plot the original vectors
-    # for vector in mean_vec:
-    #     plt.quiver(att[0,0], 0, vector[0], vector[1], angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.5)
+    import matplotlib.pyplot as plt
+    # Plotting
+    #plt.figure(figsize=(8, 8))
 
-    # # Plot the principal axes
-    # origin = np.zeros(2)
-    # for i in range(len(principal_axes)):
-    #     #plt.quiver(0, 0, principal_axes[0, i], principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.8)
-    #     # Scale the principal axes by the corresponding eigenvalue for better visualization
-    #     plt.quiver(0, 0, eigenvalues[i] * principal_axes[0, i], eigenvalues[i] * principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='green', alpha=0.5)
+    # Plot the original vectors
+    for vector in mean_vec:
+        mag = np.linalg.norm(vector)
+        unit_vec = (mag) * (vector/mag)
+        plt.quiver(0, 0, unit_vec[0], unit_vec[1], angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.5)
 
-    # plt.xlim(-10, 10)
-    # plt.ylim(-10, 10)
-    # plt.axhline(0, color='gray', lw=0.5)
-    # plt.axvline(0, color='gray', lw=0.5)
-    # plt.grid()
-    # plt.gca().set_aspect('equal', adjustable='box')
-    # plt.title("Vectors and Principal Axes")
-    # plt.xlabel("X-axis")
-    # plt.ylabel("Y-axis")
-    # plt.show()
-    # exit()
+    # Plot the principal axes
+    origin = np.zeros(2)
+
+        #plt.quiver(0, 0, principal_axes[0, i], principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.8)
+        # Scale the principal axes by the corresponding eigenvalue for better visualization
+    plt.quiver(0, 0, eigenvalues[0] * principal_axes[0, 0], eigenvalues[0] * principal_axes[1, 0], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.5)
+    plt.quiver(0, 0, eigenvalues[1] * principal_axes[0, 1], eigenvalues[1] * principal_axes[1, 1], angles='xy', scale_units='xy', scale=1, color='green', alpha=0.5)
+    
+    plt.xlim(-1, 1)
+    plt.ylim(-1, 1)
+    plt.axhline(0, color='gray', lw=0.5)
+    plt.axvline(0, color='gray', lw=0.5)
+    plt.grid()
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.title("Vectors and Principal Axes")
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.show()
+
     return PPP
 
 
@@ -219,8 +282,13 @@ class dsopt_class():
         self.assignment_arr = assignment_arr
 
     def begin(self):
+        import time
+        begin = time.time()
         opti_P = self._optimize_P(PCA=False)
+        print("opti_P time", time.time() - begin)
+        begin = time.time()
         PCA_P = self._optimize_P(PCA=True)
+        print("PCA_P time", time.time() - begin)
         plot_P(opti_P, PCA_P, self.x, self.x_att[0])
         exit()
         self._optimize_A()
@@ -265,13 +333,52 @@ class dsopt_class():
             print(result['x'])
             self.P = np.array(result['x']).reshape(N, N)
 
+
+            eigenvalues, eigenvectors = np.linalg.eig(self.P)
+            import matplotlib.pyplot as plt
+
+            for i in range(len(eigenvectors)):
+                #plt.quiver(0, 0, principal_axes[0, i], principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.8)
+                # Scale the principal axes by the corresponding eigenvalue for better visualization
+                plt.quiver(0, 0, eigenvalues[i] * eigenvectors[0, i], eigenvalues[i] * eigenvectors[1, i], angles='xy', scale_units='xy', scale=1, color='green', alpha=0.5)
+
+            mean_vec = []
+            mag_vec = []
+            # for k in range(self.K):
+            #     x_k = self.x[self.assignment_arr==k,:]
+            #     x_dot_k = self.x_dot[self.assignment_arr==k, :]
+            #     x_dot_mean_k = np.mean(x_dot_k, axis=0)
+
+            #     mag = np.linalg.norm(x_k[-1,:] - x_k[0,:])
+
+            #     x_dot_mean_k = mag * (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
+            #     mean_vec.append(x_dot_mean_k)
+                
+            # mean_vec = np.array(mean_vec)
+
+            # for vector in mean_vec:
+            #     mag = np.linalg.norm(vector)
+            #     unit_vec = (mag) * (vector/mag)
+            #     plt.quiver(0, 0, unit_vec[0], unit_vec[1], angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.5)
+            
+            plt.xlim(-5, 5)
+            plt.ylim(-5, 5)
+            plt.axhline(0, color='gray', lw=0.5)
+            plt.axvline(0, color='gray', lw=0.5)
+            plt.grid()
+            plt.gca().set_aspect('equal', adjustable='box')
+            plt.title("Vectors and Principal Axes")
+            plt.xlabel("X-axis")
+            plt.ylabel("Y-axis")
+            plt.show()
+
             return np.array(result['x']).reshape(N, N)
 
         else:
             print("##############")
             print("Using PCA")
             print("##############")
-            P_new = get_PCA_P(self.x_att[0, :], self.K, self.x_dot, self.assignment_arr)
+            P_new = get_PCA_P(self.x_att[0, :], self.K, self.x_sh, self.x_dot, self.assignment_arr)
 
             self.P = P_new
 
