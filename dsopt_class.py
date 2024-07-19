@@ -1,256 +1,10 @@
-import json, os
+import json, os, time
 import numpy  as np
 import casadi as ca
 import cvxpy  as cp
 
 
 
-def read_json(path):
-    with open(path, 'r') as f:
-        data = json.load(f)
-    return data
-
-
-
-def write_json(data, path):
-    with open(path, "w") as json_file:
-        json.dump(data, json_file, indent=4)
-
-
-
-def _objective_P(P, x, x_dot, w = 0.0001):
-    """ Eq(7) and Eq(8) in https://www.sciencedirect.com/science/article/abs/pii/S0921889014000372"""
-    M, N = x.shape
-
-    dv_dx = x @ P 
-    dx_dt = x_dot 
-
-    J_total = 0
-    for i in range(M):
-        dv_dt = ca.dot(dv_dx[i, :], dx_dt[i, :].reshape(1, -1))
-        norm_dv_dx = ca.norm_2(dv_dx[i, :])
-        norm_dx_dt = np.linalg.norm(dx_dt[i, :])
-
-        psi = ca.if_else(ca.logic_or(norm_dv_dx==0, norm_dx_dt==0), 0, dv_dt/(norm_dv_dx*norm_dx_dt))  # Eq(8)
-        J_total += ca.if_else(dv_dt<0, -w*psi**2, psi**2)  # Eq(7)
-
-    return J_total
-
-
-
-def _initial_guess(x):
-    cov = np.cov(x.T)
-    U, S, VT = np.linalg.svd(cov)
-    S = S * 100  #expand the eigen value
-    cov = U @ np.diag(S) @ VT
-    return cov.flatten()
-
-
-def normalize_vector(v):
-    norm = np.linalg.norm(v)
-    if norm == 0: 
-        return v
-    return v / norm
-
-def project_points(data, vector):
-    unit_vector = normalize_vector(vector)
-    projections = data @ unit_vector
-    return projections
-
-def find_range(projections):
-    return np.max(projections) - np.min(projections)
-
-def get_PCA_P(att, K, x, x_dot, assignment_arr):
-
-    """
-    for k in range(K):
-        x_dot_mean_k = np.mean(x_dot[assignment_arr==k, :], axis=0)
-
-        eigenvalues, eigenvectors = np.linalg.eigh(gmm_sigma[k])
-
-        idxs = eigenvalues.argsort()
-
-        principal_eigenvector = eigenvectors[:, idxs[-1]]
-
-        cos_sim = np.dot(x_dot_mean_k, principal_eigenvector) / (np.linalg.norm(x_dot_mean_k) * np.linalg.norm(principal_eigenvector))
-
-        print(cos_sim)
-
-        if np.abs(cos_sim) > 0.85:
-            filtered_K.append(k)
-    """
-    
-    mean_vec = []
-    mag_vec = []
-    for k in range(K):
-        x_k = x[assignment_arr==k,:]
-        x_dot_k = x_dot[assignment_arr==k, :]
-        x_dot_mean_k = np.mean(x_dot_k, axis=0)
-
-        mag = np.linalg.norm(x_k[-1,:] - x_k[0,:])
-
-        x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
-        mean_vec.append(x_dot_mean_k)
-        mag_vec.append(mag)
-        
-    mean_vec = np.array(mean_vec)
-    mag_vec = np.array(mag_vec).reshape(-1,1)
-
-
-    # Variable for the normal vector (a, b)
-    w = cp.Variable(2)
-    gamma = cp.Variable()
-    # Variable for the margin
-    # Constraints
-
-    weights = np.arange(K)
-    constraints = [(float(weights[i])*(mean_vec[i] @ w) >= float(weights[i])*gamma) for i in range(len(mean_vec))]
-    constraints.append(cp.SOC(1, w))
-
-    # Objective function
-    objective = cp.Maximize(gamma)
-
-    # Problem
-    problem = cp.Problem(objective, constraints)
-
-    # Solve
-    problem.solve(verbose=True)
-
-    # Extract the coefficients a, b, and margin gamma
-    w_value = w.value
-    print(w_value)
-    print(mean_vec)
-    print(mean_vec @ w_value)
-
-    d = np.array([-w_value[1], w_value[0]])
-    d1 = d/np.linalg.norm(d)
-    d2 = np.array(w_value)
-    d2 = d2/np.linalg.norm(d2)
-
-
-    projections_on_d1 = np.sum(np.abs(mag_vec * mean_vec @ d1))
-    projections_on_d2 = np.sum(np.abs(mag_vec * mean_vec @ d2))
-
-    eigenvalues = np.array([projections_on_d1, projections_on_d2])
-    eigenvectors = np.hstack((d1.reshape(-1,1), d2.reshape(-1,1)))
-
-
-    # mean_vec = mean_vec - att[0]
-    # cov_matrix = np.cov(mean_vec.T)
-    # eigenvalues, eigenvectors = np.linalg.eig(cov_matrix)
-
-    theta = -np.pi/2
-    R = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
-    principal_axes = R @ eigenvectors
-    #PPP = (R @ e_vec)  @ np.diag(e_val) @ (R @ e_vec).T
-    PPP = principal_axes @ np.diag(eigenvalues) @ principal_axes.T
-
-    
-
-    import matplotlib.pyplot as plt
-    # Plotting
-    #plt.figure(figsize=(8, 8))
-
-    # Plot the original vectors
-    for vector in mean_vec:
-        mag = np.linalg.norm(vector)
-        unit_vec = (mag) * (vector/mag)
-        plt.quiver(0, 0, unit_vec[0], unit_vec[1], angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.5)
-
-    # Plot the principal axes
-    origin = np.zeros(2)
-
-        #plt.quiver(0, 0, principal_axes[0, i], principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.8)
-        # Scale the principal axes by the corresponding eigenvalue for better visualization
-    plt.quiver(0, 0, eigenvalues[0] * principal_axes[0, 0], eigenvalues[0] * principal_axes[1, 0], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.5)
-    plt.quiver(0, 0, eigenvalues[1] * principal_axes[0, 1], eigenvalues[1] * principal_axes[1, 1], angles='xy', scale_units='xy', scale=1, color='green', alpha=0.5)
-    
-    plt.xlim(-1, 1)
-    plt.ylim(-1, 1)
-    plt.axhline(0, color='gray', lw=0.5)
-    plt.axvline(0, color='gray', lw=0.5)
-    plt.grid()
-    plt.gca().set_aspect('equal', adjustable='box')
-    plt.title("Vectors and Principal Axes")
-    plt.xlabel("X-axis")
-    plt.ylabel("Y-axis")
-    plt.show()
-
-    return PPP
-
-
-def plot_P(opti_P, PCA_P, data, att):
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches 
-
-    def V(x, y, P):
-        X = np.array([x, y])
-        return X.T @ P @ X
-
-    fig, ax = plt.subplots(1,2, figsize=(8,4))
-
-
-    # Calculate the min and max values for x and y
-    x_min, x_max = np.min(data[:, 0]), np.max(data[:, 0])
-    y_min, y_max = np.min(data[:, 1]), np.max(data[:, 1])
-    x_range = x_max - x_min
-    y_range = y_max - y_min
-    x_margin = x_range * 0.2
-    y_margin = y_range * 0.2
-    ax[0].set_xlim(x_min - x_margin, x_max + x_margin)
-    ax[0].set_ylim(y_min - y_margin, y_max + y_margin)
-    ax[1].set_xlim(x_min - x_margin, x_max + x_margin)
-    ax[1].set_ylim(y_min - y_margin, y_max + y_margin)
-
-    ax[0].scatter(data[:, 0], data[:, 1], color='k',  label='original data')
-    ax[1].scatter(data[:, 0], data[:, 1], color='k',  label='original data')
-
-
-    e_val, e_vec = np.linalg.eigh(opti_P)
-    order = e_val.argsort()[::-1]
-    e_val, e_vec = e_val[order], e_vec[:, order]
-    x, y = e_vec[:, 0]
-    theta = np.degrees(np.arctan2(y, x))
-    n_std = 1.7
-    width, height = 2 * n_std * np.sqrt(e_val)
-    #sample_pts = create_ellipsoid2d(mus[i], np.sqrt(e_val), e_vec)
-    ellip = patches.Ellipse(xy=att, width=width, height=height, angle=theta, \
-                            edgecolor="#D79B00", facecolor="#FFE6CC", lw=2.0, zorder=100, alpha=0.6)
-
-    x_min, x_max = ax[0].get_xlim()
-    y_min, y_max = ax[0].get_ylim()
-    plot_sample = 50
-    x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
-    Z = np.array([[V(xi, yi, opti_P) for xi in np.linspace(x_min,x_max,plot_sample)] for yi in np.linspace(y_min,y_max,plot_sample)])
-    contour = ax[0].contour(x_mesh, y_mesh, Z, levels=np.linspace(Z.min(), Z.max(), 20))
-    
-    ax[0].scatter(att[0], att[1], c="#D79B00", s=8, zorder=101)
-    ax[0].add_patch(ellip)
-    ax[0].set_title('Optimization')
-
-
-    e_val, e_vec = np.linalg.eigh(PCA_P)
-    order = e_val.argsort()[::-1]
-    e_val, e_vec = e_val[order], e_vec[:, order]
-    x, y = e_vec[:, 0]
-    theta = np.degrees(np.arctan2(y, x))
-    n_std = 1.7
-    width, height = 2 * n_std * np.sqrt(e_val)
-    #sample_pts = create_ellipsoid2d(mus[i], np.sqrt(e_val), e_vec)
-    ellip = patches.Ellipse(xy=att, width=width, height=height, angle=theta, \
-                            edgecolor="#D79B00", facecolor="#FFE6CC", lw=2.0, zorder=100, alpha=0.6)
-    x_min, x_max = ax[1].get_xlim()
-    y_min, y_max = ax[1].get_ylim()
-    plot_sample = 50
-    x_mesh,y_mesh = np.meshgrid(np.linspace(x_min,x_max,plot_sample),np.linspace(y_min,y_max,plot_sample))
-    Z = np.array([[V(xi, yi, PCA_P) for xi in np.linspace(x_min,x_max,plot_sample)] for yi in np.linspace(y_min,y_max,plot_sample)])
-    contour = ax[1].contour(x_mesh, y_mesh, Z, levels=np.linspace(Z.min(), Z.max(), 20))
-    
-    ax[1].scatter(att[0], att[1], c="#D79B00", s=8, zorder=101)
-    ax[1].add_patch(ellip)
-    ax[1].set_title('PCA')
-
-    plt.show()
 
 
 
@@ -281,111 +35,64 @@ class dsopt_class():
 
         self.assignment_arr = assignment_arr
 
+
     def begin(self):
-        import time
         begin = time.time()
-        opti_P = self._optimize_P(PCA=False)
-        print("opti_P time", time.time() - begin)
-        begin = time.time()
-        PCA_P = self._optimize_P(PCA=True)
-        print("PCA_P time", time.time() - begin)
-        plot_P(opti_P, PCA_P, self.x, self.x_att[0])
-        exit()
+        self._optimize_P()
+        # self._optimize_P_legacy()
+        print("Convex learning time", time.time() - begin)
         self._optimize_A()
-        # self._logOut()
+
         
         return self.A
 
 
 
-    def _optimize_P(self, PCA=True):
-        if not PCA:
-            # Define parameters and variables 
-            N = self.N
-            num_constr = int(N*(N-1)/2) + N + 1
-            P = ca.SX.sym('p', N, N)
-            g = ca.SX(num_constr, 1)
+    def _optimize_P(self):
+        """Fast/convex Lyapunov function learning by Tianyu"""
+        x = self.x_sh
+        x_dot = self.x_dot
+        assignment_arr = self.assignment_arr
 
+        x_mean_vec = []
+        mean_vec = []
+        for k in range(self.K):
+            x_k = x[assignment_arr==k,:]
+            x_dot_k = x_dot[assignment_arr==k, :]
 
-            # Define constraints
-            k = 0
-            for i in range(N):
-                for j in range(i + 1, N):  
-                    g[k] = (P[j, i] - P[i, j])   # Symmetry constraints
-                    k += 1
+            x_mean_k = np.mean(x_k, axis=0)
+            x_dot_mean_k = np.mean(x_dot_k, axis=0)
+            x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
 
-            eigen_value = ca.eig_symbolic(P)
-            for i in range(N):
-                g[N*(N-1)/2+i] = eigen_value[i]      # Positive definiteness constraints
-
-            g[-1] = 1 - ca.sum1(eigen_value)         # Eigenvalue norm constrainst 
-
-
-            # Define constraint bounds
-            lbg=[0.0]*num_constr
-            ubg=[0.0]*(num_constr-N-1) + [ca.inf]*N + [0.0]
-
-
-            # Solve nlp
-            nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
-            S = ca.nlpsol('S', 'ipopt', nlp)
-            result = S(x0=_initial_guess(self.x_sh), lbg=lbg, ubg=ubg)
-            print(result['x'])
-            self.P = np.array(result['x']).reshape(N, N)
-
-
-            eigenvalues, eigenvectors = np.linalg.eig(self.P)
-            import matplotlib.pyplot as plt
-
-            for i in range(len(eigenvectors)):
-                #plt.quiver(0, 0, principal_axes[0, i], principal_axes[1, i], angles='xy', scale_units='xy', scale=1, color='red', alpha=0.8)
-                # Scale the principal axes by the corresponding eigenvalue for better visualization
-                plt.quiver(0, 0, eigenvalues[i] * eigenvectors[0, i], eigenvalues[i] * eigenvectors[1, i], angles='xy', scale_units='xy', scale=1, color='green', alpha=0.5)
-
-            mean_vec = []
-            mag_vec = []
-            # for k in range(self.K):
-            #     x_k = self.x[self.assignment_arr==k,:]
-            #     x_dot_k = self.x_dot[self.assignment_arr==k, :]
-            #     x_dot_mean_k = np.mean(x_dot_k, axis=0)
-
-            #     mag = np.linalg.norm(x_k[-1,:] - x_k[0,:])
-
-            #     x_dot_mean_k = mag * (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
-            #     mean_vec.append(x_dot_mean_k)
-                
-            # mean_vec = np.array(mean_vec)
-
-            # for vector in mean_vec:
-            #     mag = np.linalg.norm(vector)
-            #     unit_vec = (mag) * (vector/mag)
-            #     plt.quiver(0, 0, unit_vec[0], unit_vec[1], angles='xy', scale_units='xy', scale=1, color='blue', alpha=0.5)
+            x_mean_vec.append(x_mean_k)
+            mean_vec.append(x_dot_mean_k)
             
-            plt.xlim(-5, 5)
-            plt.ylim(-5, 5)
-            plt.axhline(0, color='gray', lw=0.5)
-            plt.axvline(0, color='gray', lw=0.5)
-            plt.grid()
-            plt.gca().set_aspect('equal', adjustable='box')
-            plt.title("Vectors and Principal Axes")
-            plt.xlabel("X-axis")
-            plt.ylabel("Y-axis")
-            plt.show()
+        x_mean_vec = np.array(x_mean_vec)
+        mean_vec = np.array(mean_vec)
 
-            return np.array(result['x']).reshape(N, N)
+        P = cp.Variable((self.N, self.N), symmetric=True)
 
-        else:
-            print("##############")
-            print("Using PCA")
-            print("##############")
-            P_new = get_PCA_P(self.x_att[0, :], self.K, self.x_sh, self.x_dot, self.assignment_arr)
+        constraints = [P >> 1e-3] # set a margin to avoid computational issue
+        objective = 0
+        # for xi, vi in zip(x_mean_vec, mean_vec):
+        #     projection = vi @ P @ xi
+        #     violation = cp.pos(projection)
+        #     objective += violation
+    
+        projections = cp.sum(cp.multiply(x_mean_vec @ P, mean_vec), axis=1)
+        # projections = cp.sum(cp.multiply(x @ P, x_dot), axis=1)
+        violations  = cp.pos(projections)
+        objective   = cp.sum(violations)
 
-            self.P = P_new
+        objective = cp.Minimize(objective)
+        prob = cp.Problem(objective, constraints)
 
-            return P_new
+        prob.solve(verbose=False)
 
+        P_opt = P.value
+        # print("Optimal Matrix A:\n", P_opt)
 
-
+        self.P = P_opt
 
 
 
@@ -425,31 +132,81 @@ class dsopt_class():
         Objective = cp.norm(x_dot_pred.T-self.x_dot, 'fro')
 
         prob = cp.Problem(cp.Minimize(Objective), constraints)
-        prob.solve(solver=cp.MOSEK, verbose=True)
+        prob.solve(solver=cp.MOSEK, verbose=False)
 
         A_res = np.zeros((K, N, N))
         for k in range(K):
             A_res[k, :, :] = A_vars[k].value
-            print(A_vars[k].value)
+            # print(A_vars[k].value)
         
         self.A = A_res
 
 
 
-    def _logOut(self, js_path=[]):
-        """
-        If json file exists, overwrite; if not create a new one
 
-        A: K,M,M
-        """    
 
-        if len(js_path) == 0:
-            js_path = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'output.json')
-        self.original_js = read_json(js_path)
+    def _optimize_P_legacy(self):
+        """ Legacy P learning code"""
+        # Define parameters and variables 
+        N = self.N
+        num_constr = int(N*(N-1)/2) + N + 1
+        P = ca.SX.sym('p', N, N)
+        g = ca.SX(num_constr, 1)
 
-        self.original_js['A'] = self.A.ravel().tolist()
-        self.original_js['attractor']= self.x_att.ravel().tolist()
-        self.original_js['att_all']= self.x_att.ravel().tolist()
-        self.original_js["gripper_open"] = 0
 
-        write_json(self.original_js, js_path)
+        # Define constraints
+        k = 0
+        for i in range(N):
+            for j in range(i + 1, N):  
+                g[k] = (P[j, i] - P[i, j])   # Symmetry constraints
+                k += 1
+
+        eigen_value = ca.eig_symbolic(P)
+        for i in range(N):
+            g[N*(N-1)/2+i] = eigen_value[i]      # Positive definiteness constraints
+
+        g[-1] = 1 - ca.sum1(eigen_value)         # Eigenvalue norm constrainst 
+
+
+        # Define constraint bounds
+        lbg=[0.0]*num_constr
+        ubg=[0.0]*(num_constr-N-1) + [ca.inf]*N + [0.0]
+
+
+        # Solve nlp
+        nlp = {'x': ca.vec(P), 'f': _objective_P(P, self.x_sh, self.x_dot), 'g':g}
+        S = ca.nlpsol('S', 'ipopt', nlp)
+        result = S(x0=_initial_guess(self.x_sh), lbg=lbg, ubg=ubg)
+        print(result['x'])
+        self.P = np.array(result['x']).reshape(N, N)
+
+
+
+
+
+def _objective_P(P, x, x_dot, w = 0.0001):
+    """ Eq(7) and Eq(8) in https://www.sciencedirect.com/science/article/abs/pii/S0921889014000372"""
+    M, N = x.shape
+
+    dv_dx = x @ P 
+    dx_dt = x_dot 
+
+    J_total = 0
+    for i in range(M):
+        dv_dt = ca.dot(dv_dx[i, :], dx_dt[i, :].reshape(1, -1))
+        norm_dv_dx = ca.norm_2(dv_dx[i, :])
+        norm_dx_dt = np.linalg.norm(dx_dt[i, :])
+
+        psi = ca.if_else(ca.logic_or(norm_dv_dx==0, norm_dx_dt==0), 0, dv_dt/(norm_dv_dx*norm_dx_dt))  # Eq(8)
+        J_total += ca.if_else(dv_dt<0, -w*psi**2, psi**2)  # Eq(7)
+
+    return J_total
+
+
+
+def _initial_guess(x):
+    cov = np.cov(x.T)
+    U, S, VT = np.linalg.svd(cov)
+    S = S * 100  #expand the eigen value
+    cov = U @ np.diag(S) @ VT
+    return cov.flatten()
