@@ -59,13 +59,15 @@ class dsopt_class():
         for k in range(self.K):
             x_k = x[assignment_arr==k,:]
             x_dot_k = x_dot[assignment_arr==k, :]
+            
+            if x_k.shape[0] != 0:
 
-            x_mean_k = np.mean(x_k, axis=0)
-            x_dot_mean_k = np.mean(x_dot_k, axis=0)
-            x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
+                x_mean_k = np.mean(x_k, axis=0)
+                x_dot_mean_k = np.mean(x_dot_k, axis=0)
 
-            x_mean_vec.append(x_mean_k)
-            mean_vec.append(x_dot_mean_k)
+                x_dot_mean_k = (x_dot_mean_k / np.linalg.norm(x_dot_mean_k))
+                x_mean_vec.append(x_mean_k)
+                mean_vec.append(x_dot_mean_k)
             
         x_mean_vec = np.array(x_mean_vec)
         mean_vec = np.array(mean_vec)
@@ -87,7 +89,16 @@ class dsopt_class():
         objective = cp.Minimize(objective)
         prob = cp.Problem(objective, constraints)
 
-        prob.solve(verbose=False)
+        success = False
+        while not success:
+            try:
+                prob.solve()
+                success=True
+            except:
+                print(f"Problem not solved successfully. Retrying...")
+                print(mean_vec)
+                exit()
+
 
         P_opt = P.value
         # print("Optimal Matrix A:\n", P_opt)
@@ -132,12 +143,21 @@ class dsopt_class():
         Objective = cp.norm(x_dot_pred.T-self.x_dot, 'fro')
 
         prob = cp.Problem(cp.Minimize(Objective), constraints)
-        prob.solve(solver=cp.MOSEK, verbose=False)
+        
+        success = False
+        while not success:
+            try:
+                prob.solve()
+                success=True
+            except:
+                print(f"Problem not solved successfully. Retrying...")
+                exit()
+
 
         A_res = np.zeros((K, N, N))
         for k in range(K):
             A_res[k, :, :] = A_vars[k].value
-            # print(A_vars[k].value)
+            print("A_norm", np.linalg.norm(A_res[k], 'fro'))
         
         self.A = A_res
 
