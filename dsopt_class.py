@@ -1,6 +1,6 @@
 import json, os, time
 import numpy  as np
-import casadi as ca
+# import casadi as ca
 import cvxpy  as cp
 
 
